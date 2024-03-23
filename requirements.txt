@@ -1,0 +1,10 @@
+numpy
+matplotlib
+scikit-learn
+torch
+torchvision
+tqdm
+wandb
+ipykernel
+scikit-image
+numba
