@@ -247,3 +247,68 @@ def unadjusted_langevin_dynamics_TVSmoothed(z, sigma, k, lambda_=0.15, eps=1e-3,
             print(f'Early stopping at iteration {it}')
             break
     return energies, chain_iterates
+
+
+###########################################################################################
+##### Unadjusted Langevin Primal-Dual Algorithm (ULPDA) for TV-l2 regularization ##########
+###########################################################################################
+
+def Dstar(pbar_k):
+    ret = torch.zeros((pbar_k.size(0), pbar_k.size(1)), dtype=torch.double)
+    ret[1:] += pbar_k[:-1, :, 0]
+    ret[:-1] -= pbar_k[:-1, :, 0]
+    ret[:, 1:] += pbar_k[:, 1:, 1]
+    ret[:, :-1] -= pbar_k[:, :-1, 1]
+    return ret
+
+def D(x):
+    ret = torch.zeros((x.size(0), x.size(1), 2), dtype=torch.double)
+    ret[:-1, :, 0] = x[1:] - x[:-1]
+    ret[:, :-1, 1] = x[:, 1:] - x[:, :-1]
+    return ret
+
+def prox_tauk_g(v, z, sigma, tau_k):
+    return 1/(1+tau_k/sigma**2)*(tau_k/sigma**2*z + v)
+
+def prox_sigmak_fstar(v, s_k, lamb):
+    return torch.minimum(torch.tensor(1/lamb, dtype=v.dtype), torch.maximum(torch.tensor(-1/lamb, dtype=v.dtype), v))
+
+def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500):
+    """
+    Unadjusted Langevin primal-dual algorithm for TV-l2 regularisation.
+
+    Parameters
+    ----------
+    x0 : (M, N) numpy.ndarray
+        Initial image sample.
+    p0 : (M, N, 2) numpy.ndarray
+        Initial auxiliary vector.
+    sigma : float
+        Standard deviation of the noise added to the image.
+    s_k : float
+        $\\sigma_k$.
+    tau_k : float
+        $\\tau_k$.
+    theta_k : float
+        $\\theta_k$.
+    """
+    x = x0.detach().clone()
+    p = p0.detach().clone()
+    p_prev = None
+    xhat = torch.zeros_like(x0)
+    count = 0
+    M2 = torch.zeros_like(x0)
+    for k in range(K):
+        pbar_k = p if k==0 else p + theta_k*(p-p_prev)
+        v = x - tau_k*Dstar(pbar_k)
+        xi_k = torch.randn(x.size())
+        x = prox_tauk_g(v, z, sigma, tau_k) + (2*tau_k)**.5*xi_k
+        p_prev = p
+        p = prox_sigmak_fstar(p + s_k*D(x), s_k, lamb)
+        if k >= burnin:
+            count += 1
+            delta = x-xhat
+            xhat += delta/count
+            delta2 = x-xhat
+            M2 += delta*delta2
+    return xhat, M2/count
