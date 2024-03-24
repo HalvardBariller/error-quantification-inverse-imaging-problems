@@ -3,7 +3,6 @@ from torch.fft import fft2, ifft2, fftshift, ifftshift
 import matplotlib.pyplot as plt
 import torch
 import tqdm
-print(torch.__version__)
 # viewimage
 import tempfile
 import IPython
@@ -87,7 +86,7 @@ def forward_operator(x, k):
     k: torch.Tensor
         Kernel.
     """
-    return torch.real(ifft2(fft2(x) * fftshift(k)))
+    return ifft2(fft2(k) * fft2(x)).real
 
 
 
@@ -136,7 +135,7 @@ def regularization_smoothed_TV(x, lambda_, eps=1e-3):
     return smoothed_TV(x, eps) / lambda_
 
 
-def energy_functional_smoothedTV(x, z, lambda_, sigma, eps=1e-3):
+def energy_functional_smoothedTV(x, z, lambda_, sigma, k, eps=1e-3):
     """Compute the energy functional of x.
     -------------------
     Parameters:
@@ -148,12 +147,14 @@ def energy_functional_smoothedTV(x, z, lambda_, sigma, eps=1e-3):
         Regularization parameter.
     sigma: float
         Noise level.
+    k: torch.Tensor
+        Kernel for the forward operator.
     regularization: function
         Regularization function.
     eps: float
         Smoothing parameter.
     """
-    return regularization_smoothed_TV(x, lambda_, eps) + data_fidelity(z, x, sigma)
+    return regularization_smoothed_TV(x, lambda_, eps) + data_fidelity(z, x, sigma, k)
 
 
 ######################################################################
@@ -161,7 +162,7 @@ def energy_functional_smoothedTV(x, z, lambda_, sigma, eps=1e-3):
 ######################################################################
     
 
-def MAP(x, z, lambda_, sigma, eps=1e-3, lr=1e-2, niter=1000):
+def MAP(x, z, lambda_, sigma, k, eps=1e-3, lr=1e-2, niter=1000):
     """Compute the Maximum A Posteriori estimate of x.
     -------------------
     Parameters:
@@ -173,11 +174,13 @@ def MAP(x, z, lambda_, sigma, eps=1e-3, lr=1e-2, niter=1000):
         Regularization parameter.
     sigma: float
         Noise level.
+    k: torch.Tensor
+        Kernel for the forward operator.
     eps: float
         Smoothing parameter.
     """
     M,N = x.shape
-    E = lambda u: energy_functional_smoothedTV(u, z, lambda_, sigma, eps)
+    E = lambda u: energy_functional_smoothedTV(u, z, lambda_, sigma, k, eps)
     return optim(E, (M,N), niter=niter, lr=lr)
 
 
@@ -206,25 +209,29 @@ def posterior_variance(chain_iterates):
 ##############  Sampling functions  ##################################
 ######################################################################
 
-def unadjusted_langevin_dynamics_TVSmoothed(z, sigma, lambda_=0.15, eps=1e-3, tau=1e-4, niter=2000):
+def unadjusted_langevin_dynamics_TVSmoothed(z, sigma, k, lambda_=0.15, eps=1e-3, tau=1e-4, niter=2000):
     """Compute a sequence of iterates of x using ULA.
     -------------------
     Parameters:
-    x0: torch.Tensor
-        Starting point of the chain.
     z: torch.Tensor
         Noisy image.
-    lambda_: float
-        Regularization parameter.
     sigma: float
         Noise level.
+    k: torch.Tensor
+        Kernel for the forward operator.
+    lambda_: float
+        Regularization parameter.
     eps: float
         Smoothing parameter.
+    tau: float
+        Step size.
+    niter: int
+        Number of iterations.
     """
     burn_in = max(int(0.9 * niter), niter - 1000)
     M,N = z.shape
     early_stopping = 1e-2
-    E = lambda u: energy_functional_smoothedTV(u, z, lambda_, sigma, eps)
+    E = lambda u: energy_functional_smoothedTV(u, z, lambda_, sigma, k, eps)
     x_t = torch.randn(M, N, requires_grad=True)
     energies = []
     chain_iterates = []
