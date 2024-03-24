@@ -257,7 +257,7 @@ def Dstar(pbar_k):
     ret = torch.zeros((pbar_k.size(0), pbar_k.size(1)), dtype=torch.double)
     ret[1:] += pbar_k[:-1, :, 0]
     ret[:-1] -= pbar_k[:-1, :, 0]
-    ret[:, 1:] += pbar_k[:, 1:, 1]
+    ret[:, 1:] += pbar_k[:, :-1, 1]
     ret[:, :-1] -= pbar_k[:, :-1, 1]
     return ret
 
@@ -273,7 +273,7 @@ def prox_tauk_g(v, z, sigma, tau_k):
 def prox_sigmak_fstar(v, s_k, lamb):
     return torch.minimum(torch.tensor(1/lamb, dtype=v.dtype), torch.maximum(torch.tensor(-1/lamb, dtype=v.dtype), v))
 
-def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500):
+def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500, return_iterates=False):
     """
     Unadjusted Langevin primal-dual algorithm for TV-l2 regularisation.
 
@@ -298,6 +298,7 @@ def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500):
     xhat = torch.zeros_like(x0)
     count = 0
     M2 = torch.zeros_like(x0)
+    chain_iterates = []
     for k in range(K):
         pbar_k = p if k==0 else p + theta_k*(p-p_prev)
         v = x - tau_k*Dstar(pbar_k)
@@ -311,4 +312,9 @@ def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500):
             xhat += delta/count
             delta2 = x-xhat
             M2 += delta*delta2
-    return xhat, M2/count
+            if return_iterates:
+                chain_iterates.append(x.detach())
+    if return_iterates:
+        return xhat, M2/count, chain_iterates
+    else:
+        return xhat, M2/count
