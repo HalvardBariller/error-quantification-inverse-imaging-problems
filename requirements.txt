@@ -7,4 +7,3 @@ tqdm
 wandb
 ipykernel
 scikit-image
-numba
