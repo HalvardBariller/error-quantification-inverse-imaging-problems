@@ -38,6 +38,13 @@ def viewimage(im, normalize=True,z=2,order=0,titre='',displayfilename=False):
     plt.imsave(filename, imin, cmap='gray')
     IPython.display.display(IPython.display.Image(filename))
 
+def viewimage_rgb(im, title=''):
+    im = (np.maximum(0, np.minimum(255, np.array(im)*255))).astype(np.uint8)
+    filename = tempfile.mktemp(title+'.png')
+    plt.imsave(filename, im)
+    IPython.display.display(IPython.display.Image(filename))
+
+
 # alternative viewimage if the other one does not work:
 def Viewimage(im,dpi=100,cmap='gray'):
     plt.figure(dpi=dpi)
@@ -71,6 +78,20 @@ def optim(f, image_shape, niter=1000,lr=0.1):
         loss.backward()
         optimu.step()
     return u.detach(),losslist
+
+def optim_color(f, image_shape, niter=1000, lr=0.1):
+    M, N = image_shape
+    u = torch.randn((M, N, 3), requires_grad=True)
+    optimu = torch.optim.SGD([u], lr=lr)
+    losslist = []
+    for it in tqdm(range(niter)):
+        loss = f(u)
+        losslist.append(loss.detach())
+        optimu.zero_grad()
+        loss.backward()
+        optimu.step()
+    return u.detach(), losslist
+
 
 
 ######################################################################
@@ -318,3 +339,69 @@ def ulpda(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500, retur
         return xhat, M2/count, chain_iterates
     else:
         return xhat, M2/count
+    
+#############################################################################
+######## Unadjusted Langevin Primal-Dual Algorithm (ULPDA) for TV-l2 ########
+########              regularization for color images                ########
+#############################################################################
+
+def Dstar_rgb(pbar_k):
+    ret = torch.zeros((pbar_k.size(0), pbar_k.size(1), 3), dtype=torch.double)
+    ret[1:] += pbar_k[:-1, :, :, 0]
+    ret[:-1] -= pbar_k[:-1, :, :, 0]
+    ret[:, 1:] += pbar_k[:, :-1, :, 1]
+    ret[:, :-1] -= pbar_k[:, :-1, :, 1]
+    return ret
+
+def D_rgb(x):
+    ret = torch.zeros((x.size(0), x.size(1), 3, 2), dtype=torch.double)
+    ret[:-1, :, :, 0] = x[1:] - x[:-1]
+    ret[:, :-1, :, 1] = x[:, 1:] - x[:, :-1]
+    return ret
+
+def ulpda_rgb(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500, return_iterates=False):
+    """
+    Unadjusted Langevin primal-dual algorithm for TV-l2 regularisation for RGB images.
+
+    Parameters
+    ----------
+    x0 : (M, N) numpy.ndarray
+        Initial image sample.
+    p0 : (M, N, 2) numpy.ndarray
+        Initial auxiliary vector.
+    sigma : float
+        Standard deviation of the noise added to the image.
+    s_k : float
+        $\\sigma_k$.
+    tau_k : float
+        $\\tau_k$.
+    theta_k : float
+        $\\theta_k$.
+    """
+    x = x0.detach().clone()
+    p = p0.detach().clone()
+    p_prev = None
+    xhat = torch.zeros_like(x0)
+    count = 0
+    M2 = torch.zeros_like(x0)
+    chain_iterates = []
+    for k in range(K):
+        pbar_k = p if k==0 else p + theta_k*(p-p_prev)
+        v = x - tau_k*Dstar_rgb(pbar_k)
+        xi_k = torch.randn(x.size())
+        x = prox_tauk_g(v, z, sigma, tau_k) + (2*tau_k)**.5*xi_k
+        p_prev = p
+        p = prox_sigmak_fstar(p + s_k*D_rgb(x), s_k, lamb)
+        if k >= burnin:
+            count += 1
+            delta = x-xhat
+            xhat += delta/count
+            delta2 = x-xhat
+            M2 += delta*delta2
+            if return_iterates:
+                chain_iterates.append(x.detach())
+    if return_iterates:
+        return xhat, M2/count, chain_iterates
+    else:
+        return xhat, M2/count
+
