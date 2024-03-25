@@ -7,6 +7,7 @@ import tqdm
 import tempfile
 import IPython
 from skimage.transform import rescale
+from TDV import *
 
 pi = torch.pi
 
@@ -405,3 +406,81 @@ def ulpda_rgb(z, x0, p0, sigma, lamb, s_k, tau_k, theta_k, K=1000, burnin=500, r
     else:
         return xhat, M2/count
 
+
+
+######################################################################
+##############  Total Deep Variation ################################
+######################################################################
+
+def data_fidelity_TDV(z, x, sigma):
+    """Compute the data fidelity term (- log p(z|x)) of z.
+    -------------------
+    Parameters:
+    z: torch.Tensor
+        Image to compute the data fidelity term of.
+    x: torch.Tensor
+        Original image.
+    sigma: float
+        Noise level.
+    """
+    norm = torch.linalg.vector_norm(x - z)
+    return 0.5 * torch.square(norm) / sigma**2
+
+ 
+def regularization_TDV(TDV, x, z, lambda_, sigma, eps=1e-3):
+    """Compute the energy functional of x.
+    -------------------
+    Parameters:
+    x: torch.Tensor
+        Original image.
+    z: torch.Tensor
+        Noisy image.
+    lambda_: float
+        Regularization parameter.
+    sigma: float
+        Noise level.
+    regularization: function
+        Regularization function.
+    eps: float
+        Smoothing parameter.
+    """
+    return TDV(x) + data_fidelity_TDV(z, x, sigma)
+
+
+
+def unadjusted_langevin_dynamics_TDV(TDV, z, sigma, lambda_=0.15, eps=1e-3, tau=1e-4, niter=2000):
+    """Compute a sequence of iterates of x using ULA.
+    -------------------
+    Parameters:
+    z: torch.Tensor
+        Noisy image.
+    sigma: float
+        Noise level.
+    lambda_: float
+        Regularization parameter.
+    eps: float
+        Smoothing parameter.
+    tau: float
+        Step size.
+    niter: int
+        Number of iterations.
+    """
+    burn_in = max(int(0.9 * niter), niter - 1000)
+    M,N = z.shape
+    early_stopping = 1e-2
+    E = lambda u: regularization_TDV(TDV, u, z, lambda_, sigma, eps)
+    x_t = torch.randn(M, N, requires_grad=True)
+    energies = []
+    chain_iterates = []
+    for it in tqdm.tqdm(range(niter)):
+        energy = E(x_t)
+        energies.append(energy.detach())
+        grad = torch.autograd.grad(energy, x_t)[0]
+        x_t = x_t - tau * grad + torch.randn(M, N) * np.sqrt(2 * tau)
+        x_t = x_t.detach().requires_grad_(True)
+        if it > burn_in and it % 2 == 0:
+            chain_iterates.append(x_t.detach())
+        if len(chain_iterates) > 2 and torch.linalg.vector_norm(chain_iterates[-1] - chain_iterates[-2]) < early_stopping:
+            print(f'Early stopping at iteration {it}')
+            break
+    return energies, chain_iterates
